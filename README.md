@@ -1,5 +1,5 @@
 ## Комп'ютерні системи імітаційного моделювання
-## СПм-24-4, **Почуєнков В.І., Погуляй Д.О.,**
+## СПм-24-4, **Почуєнков В.І., Погуляй Д.О.**
 ### Домашнє завдання. Імітаційна модель їдальні університету
 
 <br>
@@ -146,6 +146,159 @@ end
 - Малює стіни по периметру.
 - Створює зону кас і вхід.
 - **Логіка столів:** Автоматично розраховує, як розмістити задану кількість столів (num-tables) рівномірною сіткою. Кожен стіл перетворює 8 своїх сусідніх патчів на стільці.
+
+  **4. Створення персоналу (setup-staff)**  
+<pre>
+to setup-staff
+  ask staff [ die ]
+  let n number-of-cashiers
+  create-staff n [
+    set shape "person"
+    set color black
+    ...
+    ; Розрахунок позиції, щоб касири стояли в ряд за прилавком
+    let spacing 4 
+    let start-x 0 - ( (n - 1) * spacing / 2 )
+    setxy (start-x + (my-pos-index * spacing)) (max-pycor - 1)
+  ]
+end
+</pre>  
+- Видаляє старих касирів і створює нових відповідно до налаштувань інтерфейсу.
+- Рівномірно розставляє їх за червоною лінією прилавку.
+
+**5. Головний цикл (go)**  
+Ця процедура виконується на кожному кроці (тіку).
+<pre>
+to go
+  ; 1. Генерація нових студентів
+  if random 100 < probability-arrival [
+    create-students (1 + random 3) [
+      ...
+      set state "queuing"               ; Початковий стан - черга
+      set queue-list lput self queue-list ; Додавання в кінець списку черги
+      ...
+    ]
+  ]
+  
+  ; 2. Логіка роботи касирів
+  handle-service-multi
+  
+  ; 3. Логіка поведінки студентів
+  ask students [ student-behavior ]
+  
+  tick
+end
+</pre>  
+- З певною ймовірністю створює нових студентів, одразу додаючи їх у глобальний список черги (queue-list).
+- Запускає процедуру обслуговування (касири).
+- Запускає процедуру поведінки (рух студентів).
+- Просуває час уперед (tick).
+
+**6. Обслуговування (handle-service-multi)**  
+
+<pre>
+to handle-service-multi
+  ask staff [
+    ; Якщо касир вільний
+    if staff-timer = 0 [
+      if not empty? queue-list [
+        let next-student first queue-list ; Беремо першого з черги
+        
+        ; Перевірка, чи студент фізично дійшов до каси
+        ask next-student [ if distancexy ... < 2 [ set ready? true ] ]
+        
+        if ready? [
+          set queue-list but-first queue-list ; Видаляємо з черги
+          set staff-customer next-student
+          
+          ask next-student [
+            set state "ordering"              ; Зміна стану студента
+            set my-cashier myself 
+            ; Статистика
+            set total-queue-time total-queue-time + (ticks - arrival-tick)
+          ]
+          set staff-timer service-time-duration ; Встановлення таймера обслуговування
+        ]
+      ]
+    ]
+    
+    ; Якщо обслуговування триває
+    if staff-timer > 0 [
+      set staff-timer staff-timer - 1
+      if staff-timer = 0 ... [ ; Коли час вийшов
+        ask staff-customer [
+          set state "searching" ; Відпускаємо студента шукати місце
+        ]
+        set staff-customer nobody
+      ]
+    ]
+  ]
+end
+</pre>  
+- Касири перевіряють, чи є хтось у черзі.
+- Якщо студент поруч, касир "забирає" його з черги, змінює його стан на "ordering" і вмикає таймер.
+- Коли таймер спливає, студента переводять у стан "searching" (пошук місця).
+
+**7. Поведінка студентів (student-behavior)**  
+Ця процедура керує рухом агентів залежно від їхнього стану state.  
+1)Черга та замовлення
+<pre>
+; Стан: черга
+  if state = "queuing" [
+    ; Знаходимо свій номер у списку черги
+    let my-index position self queue-list
+    if my-index != false [
+       ; Розрахунок координат, де треба стояти (візуалізація черги)
+       let ideal-x (0 - (target-pos * spacing))
+       ; Рух до цієї точки
+       ...
+    ]
+  ]
+  
+  ; Стан: замовлення
+  if state = "ordering" [
+    set color blue
+    ; Рух безпосередньо до свого касира
+    ...
+  ]
+
+</pre>  
+- Студенти в черзі самі знають, де їм стояти, виходячи з їхньої позиції в списку queue-list.
+- Під час замовлення вони підходять впритул до касира.
+
+2)Пошук місця та Їжа
+<pre>
+; Стан: пошук місця
+  if state = "searching" [
+    set color orange
+    
+    ; Перевірка: чи я на вільному стільці?
+    if ([is-chair?] of patch-here) and (not any? other students-here) [
+      set state "eating"
+      ask patch-here [ set pcolor orange ] ; Займаємо стілець (візуально)
+      set eating-timer time-to-eat
+      stop 
+    ]
+    
+    ; Випадковий рух (блукання) з відбиванням від стін та кас
+    rt random 40 - 20
+    fd 0.5 
+  ]
+  
+  ; Стан: їжа
+  if state = "eating" [
+    set color violet
+    set eating-timer eating-timer - 1
+    if eating-timer <= 0 [
+      set students-fed students-fed + 1
+      ask patch-here [ set pcolor yellow ] ; Звільняємо стілець
+      die ; Агент зникає
+    ]
+  ]
+
+</pre>  
+- Searching: Реалізовано простий "Random walk". Агент ходить хаотично, доки випадково не наступить на патч, який є стільцем (is-chair?) і на якому нікого немає.
+- Eating: Агент стоїть на місці, доки не сплине таймер, після чого помирає (die), звільняючи ресурси.
 
 
 
