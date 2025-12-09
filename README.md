@@ -9,7 +9,7 @@
 
 
 ### Керуючі параметри:
-- **PROBABILITY-ARRIVAL** — Ймовірність (у відсотках від 0 до 100) появи групи нових студентів на кожному такті модельного часу.
+- **PROBABILITY-ARRIVAL** Ймовірність (у відсотках від 0 до 100) появи групи нових студентів на кожному такті модельного часу.
 - **NUMBER-OF-CASHIERS**  Кількість активних касирів, що працюють одночасно.
 - **SERVICE-TIME-DURATION** Кількість тактів, необхідна касиру для обслуговування одного студента (прийняття замовлення).
 - **NUM-TABLES** Кількість столів, що розміщуються в залі при налаштуванні світу (кожен стіл генерує навколо себе стільці).
@@ -46,181 +46,112 @@
 
 <br>
 
-**Виправлення розміщення активних агентів** на ігровому полі при ініціалізації моделі - спочатку машини могли розміщуватися на тієї ж самої ділянці дороги.  
-Замість
+**1. Оголошення агентів та змінних**  
+Ця частина визначає структуру даних моделі.
 <pre>
-set xcor abs random-xcor
-</pre>
-у процедурі setup-cars використовується виклик окремої нової процедури розміщення агентів:
-<pre>
-to set-freeposition
-  set xcor random-pxcor
-  if any? other turtles-here [ set-freeposition ]
-end
-</pre>
-Стара процедура separate-cars була видалена.  
-Додавання функції для отримання випадкового числа в заданому діапазоні для частого подальшого використання в інших змінах логіки моделі
-<pre>
-to-report get-random-float [ low rand ] 
-  report low + random-float rand
-end
-</pre>
-Наприклад, використовувалася при встановленні початкового значення швидкості активних агентів:
-<pre>
-set speed get-random-float 0.1 speed-limit / 10
-</pre>
-та при встановленні обмеження максимальної швідкості для поточного агенту:
-<pre>
-set speed-limit get-random-float 1.1 0.9
-</pre>
+breed [students student]
+breed [staff a-staff]
 
-**Встановлення ліміту максимальної швидкості для кожної машини здійснюється індивідуально**, а не однаково для всіх машин:
-<pre>
-;; set speed-limit 1
-set speed-limit get-random-float 1.1 0.9
-</pre>
-Використовується кольорова диференціація машин залежно від їхньої швидкісного ліміту:
-<pre>
-  ;; set label speed-limit
-  if(speed-limit > 1.2) [
-      set color green
-  ]
-   if(speed-limit > 1.5) [
-     set color red
-  ]
-
-  ;; ask sample-car [ set color red ]
-</pre>
-Сині найповільніші, зелені швидше, червоні найшвидші.  
-Забарвлення обраної для відстеження машини скасовано.
-
-**Зміна логіки гальмування та набору швидкості** залежно від наявності перешкоди перед машиною:
-<pre>
-  let car-ahead-1 one-of turtles-on patch-ahead 1
-    let car-ahead-2 one-of turtles-on patch-ahead 2
-    ifelse car-ahead-1 = nobody and car-ahead-2 = nobody
-      [ speed-up-car ] ;; otherwise, speed up
-      [ slow-down-car car-ahead-1 car-ahead-2 ]
-    ;; don't slow down below speed minimum or speed up beyond speed limit
-    if speed < speed-min [ set speed speed-min ]
-    if speed > speed-limit [ set speed speed-limit ]
-    fd speed
-</pre>
-Для цього також були внесені зміни до процедури slow-down-car, яка спрацьовує при гальмуванні:
-<pre>
-to slow-down-car [ car-ahead-1 car-ahead-2 ] ;; turtle procedure
-  if (car-ahead-1 != nobody) 
-  [
-      let speed-car-ahead-1 [ speed ] of car-ahead-1
-      ;; slow down so you are driving more slowly than the car ahead of you
-      set speed speed-car-ahead-1 - deceleration
-      stop
-  ]
-  ]  
-  if (car-ahead-2 != nobody) [
-    let speed-car-ahead-2 [ speed ] of car-ahead-2
-    let speed-difference-ahead-2 abs speed - speed-car-ahead-2
-    set speed speed - speed-difference-ahead-2 / 2
-  ]
-end
-</pre>
-
-<br>
-
-### Внесені зміни у вихідну логіку моделі, на власний розсуд:
-
-**Додано ймовірність безвідповідальності водія, який, при нагоді, їздитиме узбіччям**.
-Імовірність встановлюється користувачем через інтерфейс середовища моделювання (слайдер для bad-driver-probability) та використовується при додаванні машин на полі:
-<pre>
 globals [
-  sample-car
-  speed-min
-  car-roadside-amount
-  bad-driver-probability
+  queue-list           ; Спільна черга (список агентів)
+  
+  ; Статистика
+  total-queue-time     ; Загальний час очікування всіх студентів
+  count-served-students; Кількість студентів, що пройшли касу
+  students-fed         ; Кількість студентів, що поїли і пішли
 ]
 
-;; виїзд на узбіччя здійснюється, якщо перед машиною є інша машина і ще одна, водій "поганий", знаходиться на дорозі (бо з узбіччя з'їжджати далі нікуди)
-if (car-ahead-1 != nobody) [
-    ;; перевіряємо, чи буде на даному тіку водій "недисциплінованим"
-    let rand random 100
-    ifelse(rand < bad-driver-probability) [
-      ;; якщо недисциплінований, і при цьому є додаткова перешкода перед машинойї перед нами, то переміщуємось на узбіччя
-      if(car-ahead-2 != nobody) [
-        ;; перевірка, чи знаходимось ми зараз на дорозі і чи вільне узбіччя
-        if (is-on-road) and (roadside-free-check) [
-          set heading 180
-          fd 1
-          set heading 90
-          ;; збільшуємо лічильник "узбічників"
-          set car-roadside-amount car-roadside-amount + 1
+students-own [
+  state                ; Поточний стан: "queuing", "ordering", "searching", "eating"
+  arrival-tick         ; Час появи (для підрахунку очікування)
+  eating-timer         ; Час, що залишився на їжу
+  my-cashier           ; Посилання на касира, який обслуговує
+]
+
+staff-own [
+  staff-timer          ; Час до завершення обслуговування поточного клієнта
+  staff-customer       ; Посилання на студента, якого обслуговують зараз
+]
+
+patches-own [          ; Властивості ділянок поля
+  is-counter?          
+  is-chair?            
+  is-table?            
+  is-wall?             
+]
+</pre>  
+- Створюються два види агентів: students (відвідувачі) та staff (касири).
+- Оголошуються глобальні змінні для черги та статистики.
+- Кожен агент та ділянка (patch) отримують власні змінні. Наприклад, патчі знають, чи є вони стіною, столом або стільцем, а студенти знають свій поточний стан.
+
+**2. Ініціалізація світу (setup)**  
+Головна процедура запуску.
+<pre>
+to setup
+  setup-map 
+  reset-round
+  setup-staff
+end
+</pre>  
+- Викликає допоміжні процедури: малювання карти (setup-map), скидання лічильників (reset-round) та створення персоналу (setup-staff).
+
+**3. Малювання мапи та меблів (setup-map)**  
+<pre>
+to setup-map
+  no-display
+  clear-all 
+  
+  ; Очищення та фон
+  ask patches [ 
+    set pcolor white 
+    set is-chair? false   
+    ... 
+  ] 
+  
+  ; 1. Стіни (кордони світу)
+  ask patches with [ ... ] [ set pcolor black set is-wall? true ]
+  
+  ; 2. Зона кас
+  ask patches with [ pycor > max-pycor - 3 and abs pxcor < 8 ] [ ... set is-counter? true ]
+
+  ; 3. Вхід
+  ask patch min-pxcor (max-pycor - 5) [ ... set is-wall? false ... ]
+  
+  ; 4. Столи (алгоритм розміщення)
+  if num-tables > 0 [
+    ; Розрахунок сітки (рядки та колонки) для рівномірного розміщення столів
+    let cols ceiling sqrt num-tables          
+    let rows ceiling (num-tables / cols)      
+    ...
+    while [tables-created < num-tables] [
+      ; Визначення координат та малювання столу (коричневий) і стільців навколо (жовті)
+      ask target-patch [
+        set pcolor brown
+        set is-table? true
+        ask neighbors [          ; Сусідні 8 патчів стають стільцями
+          if not is-wall? [ 
+            set pcolor yellow 
+            set is-chair? true 
+          ]
         ]
       ]
+      ...
     ]
   ]
-</pre>
-Лічильник "поганих водіїв" виводитиметься користувачеві.
-
-Перед виїздом на узбіччя, воне проглядається водієм, чи вільно там, за допомогою функції is-roadside-free:
-<pre>
-to-report roadside-free-check
-  set heading 180
-  let car-roadside one-of turtles-on patch-ahead 1
-  set heading 90
-  ;ifelse(car-roadside = nobody) [
-    report car-roadside = nobody
-  ;;]
-  ;;[
-  ;;  report false
-  ;;]
+  display
 end
-</pre>
 
-Пеервірка, чи знаходимось на дорозі:
-<pre>
-to-report is-on-road
-    report pycor = 0
-end
-</pre>
+</pre>  
+- Очищає поле.
+- Малює стіни по периметру.
+- Створює зону кас і вхід.
+- **Логіка столів:** Автоматично розраховує, як розмістити задану кількість столів (num-tables) рівномірною сіткою. Кожен стіл перетворює 8 своїх сусідніх патчів на стільці.
 
-Додано узбіччя, дорога зведена до повноційної односмугової:
-<pre>
-to setup-road ;; patch procedure
-  if pycor < 1 and pycor > -2 [ set pcolor yellow ]
-  if pycor < 1 and pycor > -1 [ set pcolor white ]
-end
-</pre>
 
-На кожному ході виконується перевірка, чи знаходиться машина на дорозі. Якщо машина їде узбіччям, то намагатиметься повернутися на дорогу:
-<pre>
-  if(not is-on-road) [
-      if (road-main-free-check) [
-        set heading 0
-        fd 1
-        set heading 90
-        set car-roadside-amount car-roadside-amount - 1
-      ]
-    ]
-</pre>
-Функція перевірки, чи вільна дорога поблизу машини, щоб можна було повернутися з узбіччя:
-<pre>
-to-report road-main-free-check
-  set heading 0
-  let car-road one-of turtles-on patch-ahead 1
-  set heading 90
-  ;ifelse(car-roadside = nobody) [
-    report car-road = nobody
-  ;;]
-  ;;[
-  ;;  report false
-  ;;]
-end
-</pre>
 
-![Скріншот моделі в процесі симуляції](example-model.png)
+![Скріншот моделі в процесі симуляції](example-model1.png)
 
-Фінальний код моделі та її інтерфейс доступні за [посиланням](example-model.nlogo). *// якщо вносили зміни до інтерфейсу середовища моделювання - то експорт потрібен у форматі nlogo, як тут. Інакше, якщо змінювався лише код логіки моделі, достатньо викласти лише його, як [тут](example-model-code.html),якщо експортовано з десктопної версії NetLogo, або окремим текстовим файлом, шляхом копіпасту з веб-версії*.
+Фінальний код моделі та її інтерфейс доступні за [посиланням](yidalnyaFINAL3.nlogox). 
 <br>
 
-## Обчислювальні експерименти
-*// тут повинен бути наведений опис одного експерименту, за аналогією з першої л/р.* 
-### 1. Вплив дисциплінованості водіів на середню швидкість переміщення
+
